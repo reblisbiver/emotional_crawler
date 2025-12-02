@@ -52,114 +52,172 @@ def create_chrome_driver():
     driver.implicitly_wait(5)
     return driver
 
-def user_confirm(timeout=60):
-    """用户手动确认函数（超时60秒，输入指定指令视为确认）"""
-    confirm_result = [False]  # 用列表实现多线程修改
+def wait_for_login_success(driver, platform, timeout=120):
+    """
+    自动检测扫码登录是否成功（通过页面跳转/元素变化判断）
+    :param driver: 浏览器驱动
+    :param platform: 平台名称 ("xiaohongshu" 或 "weibo")
+    :param timeout: 超时时间（秒），默认120秒
+    :return: True=登录成功, False=超时失败
+    """
+    print(f"⏳ 等待扫码登录（{timeout}秒超时）...")
+    start_time = time.time()
+    check_interval = 2
     
-    def input_thread():
-        """输入线程：等待用户输入"""
-        user_input = input("\n👉 登录成功后按's'回车确认（超时自动失败）：")
-        if user_input.strip().lower() == "s":
-            confirm_result[0] = True
+    while time.time() - start_time < timeout:
+        try:
+            current_url = driver.current_url
+            
+            if platform == "xiaohongshu":
+                login_indicators = [
+                    (By.XPATH, "//div[contains(@class, 'user') or contains(@class, 'avatar')]//img"),
+                    (By.XPATH, "//a[contains(@href, '/user/profile')]"),
+                    (By.XPATH, "//div[contains(@class, 'sidebar')]//img[contains(@class, 'avatar')]"),
+                    (By.XPATH, "//*[contains(@class, 'reds-icon-user')]"),
+                ]
+                if "passport" not in current_url and "login" not in current_url.lower():
+                    for locator in login_indicators:
+                        try:
+                            element = driver.find_element(*locator)
+                            if element:
+                                print(f"✅ 检测到登录成功标志！当前URL：{current_url[:50]}...")
+                                return True
+                        except:
+                            continue
+                    if "xiaohongshu.com" in current_url and "explore" in current_url:
+                        print(f"✅ 检测到已跳转至首页！登录成功")
+                        return True
+                        
+            elif platform == "weibo":
+                if "passport" not in current_url and "login" not in current_url.lower():
+                    login_indicators = [
+                        (By.XPATH, "//a[contains(@class, 'gn_name')]"),
+                        (By.XPATH, "//div[contains(@class, 'gn_header')]//img"),
+                        (By.XPATH, "//a[contains(@href, '/profile')]"),
+                        (By.XPATH, "//span[contains(@class, 'gn_name')]"),
+                        (By.XPATH, "//div[contains(@class, 'WB_miniblog')]"),
+                    ]
+                    for locator in login_indicators:
+                        try:
+                            element = driver.find_element(*locator)
+                            if element:
+                                print(f"✅ 检测到登录成功标志！当前URL：{current_url[:50]}...")
+                                return True
+                        except:
+                            continue
+                    if "weibo.com" in current_url and ("home" in current_url or current_url.endswith("weibo.com/")):
+                        print(f"✅ 检测到已跳转至首页！登录成功")
+                        return True
+            
+            elapsed = int(time.time() - start_time)
+            if elapsed % 10 == 0:
+                print(f"⏳ 已等待 {elapsed} 秒，继续检测中...")
+                
+        except Exception as e:
+            print(f"⚠️ 检测过程出错：{str(e)[:50]}...")
+        
+        time.sleep(check_interval)
     
-    # 启动输入线程
-    thread = threading.Thread(target=input_thread)
-    thread.daemon = True  # 主线程退出时，输入线程也退出
-    thread.start()
-    
-    # 主线程倒计时等待
-    for i in range(timeout, 0, -1):
-        if confirm_result[0]:
-            return True
-        time.sleep(1)
-    
-    print("\n")
     return False
 
 def login_xiaohongshu(driver):
-    """小红书登录：用户手动反馈法（用户确认后才继续）"""
+    """小红书登录：扫码登录自动检测"""
     try:
         print("\n" + "="*60)
-        print("📱 小红书手动登录流程（用户确认模式）")
+        print("📱 小红书扫码登录流程（自动检测模式）")
         print("="*60)
-        print(f"1. 目标手机号：{XHS_CONFIG['phone']}（请手动输入）")
-        print("2. 操作步骤：点击登录 → 输入手机号 → 滑块验证 → 验证码登录")
-        print("3. 登录成功后，回到命令行输入 'success' 并回车（大小写不敏感）")
-        print("4. 超时时间：60秒（未输入则视为登录失败）")
+        print("1. 操作步骤：打开小红书APP → 扫描二维码 → 确认登录")
+        print("2. 系统会自动检测登录状态，无需手动确认")
+        print("3. 超时时间：120秒")
         print("="*60)
         
-        # 打开小红书登录入口
         driver.get("https://www.xiaohongshu.com/")
-        time.sleep(2)
+        time.sleep(3)
         
-        # 自动点击登录按钮（帮用户省一步）
         try:
             login_btn = WebDriverWait(driver, 10).until(
                 EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), '登录')]"))
             )
             driver.execute_script("arguments[0].click();", login_btn)
-            print("→ 已自动点击登录按钮，跳转至登录页（请继续手动操作）")
+            print("→ 已自动点击登录按钮")
+            time.sleep(2)
         except:
-            print("→ 未找到登录按钮，请手动点击页面上的「登录」字样")
+            print("→ 未找到登录按钮，可能已在登录页面")
         
-        # 核心：等待用户手动确认
-        print("\n📌 提示：登录成功后（页面显示个人主页/发现页），立即在命令行输入 'success' 确认")
-        if user_confirm(timeout=60):
-            print("✅ 收到用户确认！小红书登录成功，即将开始爬取")
+        try:
+            qr_tab = driver.find_element(By.XPATH, "//*[contains(text(), '扫码登录') or contains(text(), '二维码')]")
+            driver.execute_script("arguments[0].click();", qr_tab)
+            print("→ 已切换到扫码登录")
+            time.sleep(1)
+        except:
+            print("→ 扫码登录页面已就绪")
+        
+        print("\n📱 请使用小红书APP扫描屏幕上的二维码...")
+        print("="*60)
+        
+        if wait_for_login_success(driver, "xiaohongshu", timeout=120):
+            print("✅ 小红书登录成功！即将开始爬取")
             print("="*60 + "\n")
             return True
         else:
-            print("\n❌ 超时未收到用户确认（60秒），视为登录失败")
-            driver.save_screenshot("./xhs_login_error.png")
+            print("\n❌ 登录超时（120秒），未检测到登录成功")
+            driver.save_screenshot("./code/xhs_login_error.png")
             print("→ 错误截图已保存：xhs_login_error.png")
             return False
     
     except Exception as e:
         print(f"\n❌ 小红书登录流程异常：{str(e)[:100]}...")
-        driver.save_screenshot("./xhs_login_error.png")
+        driver.save_screenshot("./code/xhs_login_error.png")
         print("→ 错误截图已保存：xhs_login_error.png")
         return False
 
 def login_weibo(driver):
-    """微博登录：用户手动反馈法（用户确认后才继续）"""
+    """微博登录：扫码登录自动检测"""
     try:
         print("\n" + "="*60)
-        print("📱 微博手动登录流程（用户确认模式）")
+        print("📱 微博扫码登录流程（自动检测模式）")
         print("="*60)
-        print(f"1. 目标手机号：{WEIBO_CONFIG['phone']}（请手动输入）")
-        print("2. 操作步骤：输入手机号 → 滑块验证 → 验证码登录")
-        print("3. 登录成功后，回到命令行输入 'success' 并回车（大小写不敏感）")
-        print("4. 超时时间：60秒（未输入则视为登录失败）")
+        print("1. 操作步骤：打开微博APP → 扫描二维码 → 确认登录")
+        print("2. 系统会自动检测登录状态，无需手动确认")
+        print("3. 超时时间：120秒")
         print("="*60)
         
-        # 打开微博登录页
         driver.get("https://passport.weibo.com/sso/signin?entry=miniblog")
-        time.sleep(2)
+        time.sleep(3)
         
-        # 核心：等待用户手动确认
-        print("\n📌 提示：登录成功后（页面显示微博首页/个人主页），立即在命令行输入 'success' 确认")
-        if user_confirm(timeout=60):
-            print("✅ 收到用户确认！微博登录成功，即将开始爬取")
+        try:
+            qr_tab = driver.find_element(By.XPATH, "//*[contains(text(), '扫码登录') or contains(@class, 'qr')]")
+            driver.execute_script("arguments[0].click();", qr_tab)
+            print("→ 已切换到扫码登录")
+            time.sleep(1)
+        except:
+            print("→ 扫码登录页面已就绪")
+        
+        print("\n📱 请使用微博APP扫描屏幕上的二维码...")
+        print("="*60)
+        
+        if wait_for_login_success(driver, "weibo", timeout=120):
+            print("✅ 微博登录成功！即将开始爬取")
             print("="*60 + "\n")
             return True
         else:
-            print("\n❌ 超时未收到用户确认（60秒），视为登录失败")
-            driver.save_screenshot("./weibo_login_error.png")
+            print("\n❌ 登录超时（120秒），未检测到登录成功")
+            driver.save_screenshot("./code/weibo_login_error.png")
             print("→ 错误截图已保存：weibo_login_error.png")
             return False
     
     except Exception as e:
         print(f"\n❌ 微博登录流程异常：{str(e)[:100]}...")
-        driver.save_screenshot("./weibo_login_error.png")
+        driver.save_screenshot("./code/weibo_login_error.png")
         print("→ 错误截图已保存：weibo_login_error.png")
         return False
 
-# 自测试功能（保持不变）
+# 自测试功能
 if __name__ == "__main__":
     print("="*50)
-    print("📌 login_utils.py 自测试启动（用户确认模式）")
+    print("📌 login_utils.py 自测试启动（扫码登录自动检测模式）")
     print("="*50)
-    print("⚠️  测试说明：输入 'success' 可模拟确认，等待60秒可模拟超时")
+    print("⚠️  测试说明：扫码登录后系统会自动检测，无需手动确认")
     print("="*50)
     
     driver = None

@@ -11,34 +11,34 @@ def main():
     print("✅ 浏览器驱动创建成功，开始执行流程...")
 
     try:
-        # # -------------------------- 小红书流程：登录→爬取（必须完成一个才下一个）--------------------------
-        # print("\n" + "="*60)
-        # print("📱 开始小红书流程（登录→爬取）")
-        # print("="*60)
+        # -------------------------- 小红书流程：登录→爬取（必须完成一个才下一个）--------------------------
+        print("\n" + "="*60)
+        print("📱 开始小红书流程（登录→爬取）")
+        print("="*60)
         
-        # # 小红书登录：未完成登录→不进入爬取（登录失败会直接终止程序）
-        # login_success = login_xiaohongshu(driver)
-        # if login_success:
-        #     print("🚀 小红书登录完成，开始爬取小红书数据...")
-        #     # 小红书爬取：未完成爬取→不进入微博流程
-        #     xhs_text_data = crawl_xiaohongshu(driver)
-        #     # 保存小红书数据（无论是否爬取到内容，都算爬取流程完成）
-        #     save_text_data("xiaohongshu", xhs_text_data)
-        #     print(f"✅ 小红书爬取完成！共保存 {len(xhs_text_data)} 条文本数据")
-        # else:
-        #     print("❌ 小红书登录失败，跳过小红书爬取")
-        #     # 若小红书登录失败，可选择终止程序或继续微博（这里按“继续”处理，可按需修改）
+        # 小红书登录：未完成登录→不进入爬取（登录失败会直接终止程序）
+        login_success = login_xiaohongshu(driver)
+        if login_success:
+            print("🚀 小红书登录完成，开始爬取小红书数据...")
+            # 小红书爬取：未完成爬取→不进入微博流程
+            xhs_text_data = crawl_xiaohongshu(driver)
+            # 保存小红书数据（无论是否爬取到内容，都算爬取流程完成）
+            save_text_data("xiaohongshu", xhs_text_data)
+            print(f"✅ 小红书爬取完成！共保存 {len(xhs_text_data)} 条文本数据")
+        else:
+            print("❌ 小红书登录失败，跳过小红书爬取")
+            # 若小红书登录失败，可选择终止程序或继续微博（这里按"继续"处理，可按需修改）
 
-        # # -------------------------- 微博流程：打开标签页→登录→爬取（必须完成一个才下一个）--------------------------
-        # print("\n" + "="*60)
-        # print("📱 开始微博流程（打开标签页→登录→爬取）")
-        # print("="*60)
+        # -------------------------- 微博流程：打开标签页→登录→爬取（必须完成一个才下一个）--------------------------
+        print("\n" + "="*60)
+        print("📱 开始微博流程（打开标签页→登录→爬取）")
+        print("="*60)
         
-        # # 关键：小红书爬取完成后，才打开微博标签页（避免提前打开）
-        # print("🔄 小红书流程完成，打开微博专属标签页...")
-        # driver.execute_script("window.open('');")
-        # driver.switch_to.window(driver.window_handles[-1])  # 切换到新标签页
-        # time.sleep(1)  # 平稳切换，避免加载冲突
+        # 关键：小红书爬取完成后，才打开微博标签页（避免提前打开）
+        print("🔄 小红书流程完成，打开微博专属标签页...")
+        driver.execute_script("window.open('');")
+        driver.switch_to.window(driver.window_handles[-1])  # 切换到新标签页
+        time.sleep(1)  # 平稳切换，避免加载冲突
         
         # 微博登录：未完成登录→不进入爬取（登录失败会直接终止程序）
         weibo_login_success = login_weibo(driver)

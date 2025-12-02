@@ -16,30 +16,55 @@ def crawl_xiaohongshu(driver):
     keyword = SAVE_CONFIG["keyword"]
     
     try:
-        # 构造搜索URL并访问（简化URL，避免多余参数干扰）
         search_url = f"{XHS_CONFIG['search_url']}?keyword={keyword}"
+        print(f"→ 访问搜索页面：{search_url}")
         driver.get(search_url)
-        time.sleep(5)
+        time.sleep(8)
         
-        # 滚动页面加载更多内容（2次滚动，确保帖子加载完整）
-        for i in range(2):
+        print(f"→ 当前页面URL：{driver.current_url}")
+        print(f"→ 页面标题：{driver.title}")
+        
+        if "login" in driver.current_url.lower() or "passport" in driver.current_url.lower():
+            print("⚠️ 检测到登录页面，可能需要重新登录...")
+            driver.save_screenshot("./code/xhs_need_login.png")
+            return text_data
+        
+        for i in range(3):
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            WebDriverWait(driver, 5).until(
-                lambda d: d.execute_script("return document.readyState") == "complete"
-            )
-            time.sleep(1)  # 额外等待动态内容加载
+            time.sleep(2)
+            print(f"→ 页面滚动 {i+1}/3")
         
-        # 问题1修复：根据你提供的帖子XPATH，提取精准定位规则
-        # 你的帖子XPATH：/html/body/div[2]/div[1]/div[2]/div[2]/div/div/div[3]/div[1]/section[1]
-        # 提取特征：div[3]/div[1]下的section（帖子容器），避免定位到非帖子元素
+        driver.execute_script("window.scrollTo(0, 0);")
+        time.sleep(1)
+        
         print("正在查找小红书帖子...")
-        post_cards = WebDriverWait(driver, 15).until(
-            EC.presence_of_all_elements_located((By.XPATH, 
-                "//div[contains(@class, 'search-result')]/div[3]/div[1]/section | "  # 匹配你提供的XPATH层级
-                "//div[2]/div[1]/div[2]/div[2]/div/div/div[3]/div[1]/section"  # 完全匹配你的帖子父级路径
-            ))
-        )
-        print(f"找到{len(post_cards)}条小红书帖子（已精准匹配帖子容器）")
+        post_cards = []
+        
+        selectors = [
+            "//section[contains(@class, 'note-item')]",
+            "//div[contains(@class, 'note-item')]",
+            "//a[contains(@href, '/explore/') or contains(@href, '/discovery/item/')]",
+            "//div[contains(@class, 'feeds-page')]//section",
+            "//div[contains(@class, 'note')]//a[contains(@href, 'note')]",
+        ]
+        
+        for selector in selectors:
+            try:
+                post_cards = driver.find_elements(By.XPATH, selector)
+                if post_cards:
+                    print(f"→ 使用选择器找到帖子：{selector}")
+                    break
+            except:
+                continue
+        
+        if not post_cards:
+            print("⚠️ 未找到帖子，尝试保存页面截图...")
+            driver.save_screenshot("./code/xhs_no_posts.png")
+            page_source = driver.page_source[:2000]
+            print(f"→ 页面内容预览：{page_source[:500]}...")
+            return text_data
+            
+        print(f"找到{len(post_cards)}条小红书帖子")
         
         for idx, card in enumerate(post_cards, 1):
             try:

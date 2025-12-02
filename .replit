@@ -1,7 +1,7 @@
 modules = ["python-3.11"]
 [nix]
 channel = "stable-25_05"
-packages = ["freetype", "geckodriver", "lcms2", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "openjpeg", "tcl", "tk", "unzip", "zip", "zlib", "chromium", "chromedriver"]
+packages = ["freetype", "geckodriver", "lcms2", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "openjpeg", "tcl", "tk", "unzip", "zip", "zlib", "chromium", "chromedriver", "noto-fonts-cjk-sans"]
 
 [agent]
 expertMode = true
@@ -30,6 +30,6 @@ task = "shell.exec"
 args = "cd code && python main.py"
 
 [[ports]]
-localPort = 54205
+localPort = 45361
 externalPort = 80
 exposeLocalhost = true

@@ -128,39 +128,46 @@ def login_xiaohongshu(driver):
         print("="*60)
         print("1. 操作步骤：打开小红书APP → 扫描二维码 → 确认登录")
         print("2. 系统会自动检测登录状态，无需手动确认")
-        print("3. 超时时间：120秒")
+        print("3. 超时时间：180秒")
         print("="*60)
         
-        driver.get("https://www.xiaohongshu.com/")
-        time.sleep(3)
+        driver.set_window_size(1280, 900)
+        driver.get("https://www.xiaohongshu.com/explore")
+        print("→ 正在加载小红书页面...")
+        time.sleep(5)
         
         try:
-            login_btn = WebDriverWait(driver, 10).until(
+            login_btn = WebDriverWait(driver, 15).until(
                 EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), '登录')]"))
             )
             driver.execute_script("arguments[0].click();", login_btn)
             print("→ 已自动点击登录按钮")
-            time.sleep(2)
+            time.sleep(3)
         except:
-            print("→ 未找到登录按钮，可能已在登录页面")
+            print("→ 未找到登录按钮，尝试直接访问登录页...")
+            driver.get("https://www.xiaohongshu.com/")
+            time.sleep(5)
         
         try:
-            qr_tab = driver.find_element(By.XPATH, "//*[contains(text(), '扫码登录') or contains(text(), '二维码')]")
+            qr_tab = driver.find_element(By.XPATH, "//*[contains(text(), '扫码登录') or contains(text(), '二维码') or contains(text(), 'APP扫码')]")
             driver.execute_script("arguments[0].click();", qr_tab)
             print("→ 已切换到扫码登录")
-            time.sleep(1)
+            time.sleep(2)
         except:
             print("→ 扫码登录页面已就绪")
+        
+        driver.execute_script("document.body.style.zoom='90%'")
+        driver.execute_script("window.scrollTo(0, 0);")
         
         print("\n📱 请使用小红书APP扫描屏幕上的二维码...")
         print("="*60)
         
-        if wait_for_login_success(driver, "xiaohongshu", timeout=120):
+        if wait_for_login_success(driver, "xiaohongshu", timeout=180):
             print("✅ 小红书登录成功！即将开始爬取")
             print("="*60 + "\n")
             return True
         else:
-            print("\n❌ 登录超时（120秒），未检测到登录成功")
+            print("\n❌ 登录超时（180秒），未检测到登录成功")
             driver.save_screenshot("./code/xhs_login_error.png")
             print("→ 错误截图已保存：xhs_login_error.png")
             return False
@@ -179,29 +186,41 @@ def login_weibo(driver):
         print("="*60)
         print("1. 操作步骤：打开微博APP → 扫描二维码 → 确认登录")
         print("2. 系统会自动检测登录状态，无需手动确认")
-        print("3. 超时时间：120秒")
+        print("3. 超时时间：180秒")
         print("="*60)
         
+        driver.set_window_size(1280, 900)
         driver.get("https://passport.weibo.com/sso/signin?entry=miniblog")
-        time.sleep(3)
+        print("→ 正在加载微博登录页面...")
+        time.sleep(5)
         
         try:
             qr_tab = driver.find_element(By.XPATH, "//*[contains(text(), '扫码登录') or contains(@class, 'qr')]")
             driver.execute_script("arguments[0].click();", qr_tab)
             print("→ 已切换到扫码登录")
-            time.sleep(1)
+            time.sleep(2)
         except:
             print("→ 扫码登录页面已就绪")
+        
+        driver.execute_script("document.body.style.zoom='80%'")
+        driver.execute_script("window.scrollTo(0, 0);")
+        
+        try:
+            qr_element = driver.find_element(By.XPATH, "//img[contains(@class, 'qr') or contains(@alt, '二维码') or contains(@src, 'qr')]")
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", qr_element)
+            print("→ 已定位到二维码位置")
+        except:
+            print("→ 二维码应已在可视区域")
         
         print("\n📱 请使用微博APP扫描屏幕上的二维码...")
         print("="*60)
         
-        if wait_for_login_success(driver, "weibo", timeout=120):
+        if wait_for_login_success(driver, "weibo", timeout=180):
             print("✅ 微博登录成功！即将开始爬取")
             print("="*60 + "\n")
             return True
         else:
-            print("\n❌ 登录超时（120秒），未检测到登录成功")
+            print("\n❌ 登录超时（180秒），未检测到登录成功")
             driver.save_screenshot("./code/weibo_login_error.png")
             print("→ 错误截图已保存：weibo_login_error.png")
             return False

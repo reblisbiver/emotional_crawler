@@ -30,6 +30,6 @@ task = "shell.exec"
 args = "cd code && python main.py"
 
 [[ports]]
-localPort = 49161
+localPort = 54205
 externalPort = 80
 exposeLocalhost = true

@@ -1,7 +1,7 @@
 modules = ["python-3.11"]
 [nix]
 channel = "stable-25_05"
-packages = ["freetype", "geckodriver", "lcms2", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "openjpeg", "tcl", "tk", "unzip", "zip", "zlib", "chromium", "chromedriver", "noto-fonts-cjk-sans"]
+packages = ["chromedriver", "chromium", "freetype", "geckodriver", "lcms2", "libGL", "libGLU", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "noto-fonts-cjk-sans", "openjpeg", "tcl", "tk", "unzip", "zip", "zlib"]
 
 [agent]
 expertMode = true

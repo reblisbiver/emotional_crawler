@@ -6,16 +6,6 @@ packages = ["freetype", "geckodriver", "lcms2", "libimagequant", "libjpeg", "lib
 [agent]
 expertMode = true
 
-[[ports]]
-localPort = 37653
-externalPort = 3000
-exposeLocalhost = true
-
-[[ports]]
-localPort = 44043
-externalPort = 80
-exposeLocalhost = true
-
 [workflows]
 runButton = "Project"
 
@@ -32,9 +22,14 @@ args = "爬虫程序"
 name = "爬虫程序"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "vnc"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "cd code && python main.py"
 
-[workflows.workflow.metadata]
-outputType = "console"
+[[ports]]
+localPort = 49161
+externalPort = 80
+exposeLocalhost = true

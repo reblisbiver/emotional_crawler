@@ -35,13 +35,13 @@ externalPort = 3000
 exposeLocalhost = true
 
 [[ports]]
-localPort = 45361
-externalPort = 80
+localPort = 40083
+externalPort = 3001
 exposeLocalhost = true
 
 [[ports]]
-localPort = 59597
-externalPort = 3001
+localPort = 45361
+externalPort = 80
 exposeLocalhost = true
 
 [userenv]

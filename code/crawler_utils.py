@@ -1,25 +1,31 @@
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.keys import Keys
 import time
-from config import XHS_CONFIG, WEIBO_CONFIG, SAVE_CONFIG
+import re
+from config import XHS_CONFIG, WEIBO_CONFIG, SAVE_CONFIG, CRAWL_CONFIG
 from save_utils import save_image_data
 
-def crawl_xiaohongshu(driver):
+def crawl_xiaohongshu(driver, target_count=None):
     """
-    爬取小红书包含关键词的帖子（文本+图片）- 修复定位问题
-    :param driver: 已登录的浏览器驱动
-    :return: 文本数据列表
+    爬取小红书帖子，支持多页滚动直到达到目标条数
     """
+    print("=" * 60)
     print("开始爬取小红书数据...")
+    print("=" * 60)
+    
     text_data = []
+    image_data = []
     keyword = SAVE_CONFIG["keyword"]
+    target = target_count or CRAWL_CONFIG["target_texts"]
+    processed_ids = set()
     
     try:
         search_url = f"{XHS_CONFIG['search_url']}?keyword={keyword}"
         print(f"→ 访问搜索页面：{search_url}")
         driver.get(search_url)
-        time.sleep(8)
+        time.sleep(CRAWL_CONFIG["page_load_wait"])
         
         print(f"→ 当前页面URL：{driver.current_url}")
         print(f"→ 页面标题：{driver.title}")
@@ -27,254 +33,320 @@ def crawl_xiaohongshu(driver):
         if "login" in driver.current_url.lower() or "passport" in driver.current_url.lower():
             print("⚠️ 检测到登录页面，可能需要重新登录...")
             driver.save_screenshot("./code/xhs_need_login.png")
-            return text_data
+            return text_data, image_data
         
-        for i in range(3):
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2)
-            print(f"→ 页面滚动 {i+1}/3")
+        scroll_count = 0
+        max_scrolls = CRAWL_CONFIG["max_pages"] * 5
+        no_new_count = 0
         
-        driver.execute_script("window.scrollTo(0, 0);")
-        time.sleep(1)
-        
-        print("正在查找小红书帖子...")
-        post_cards = []
-        
-        selectors = [
-            "//section[contains(@class, 'note-item')]",
-            "//div[contains(@class, 'note-item')]",
-            "//a[contains(@href, '/explore/') or contains(@href, '/discovery/item/')]",
-            "//div[contains(@class, 'feeds-page')]//section",
-            "//div[contains(@class, 'note')]//a[contains(@href, 'note')]",
-        ]
-        
-        for selector in selectors:
-            try:
-                post_cards = driver.find_elements(By.XPATH, selector)
-                if post_cards:
-                    print(f"→ 使用选择器找到帖子：{selector}")
-                    break
-            except:
-                continue
-        
-        if not post_cards:
-            print("⚠️ 未找到帖子，尝试保存页面截图...")
-            driver.save_screenshot("./code/xhs_no_posts.png")
-            page_source = driver.page_source[:2000]
-            print(f"→ 页面内容预览：{page_source[:500]}...")
-            return text_data
+        while len(text_data) < target and scroll_count < max_scrolls:
+            scroll_count += 1
+            print(f"\n--- 第 {scroll_count} 次滚动 | 已采集 {len(text_data)}/{target} 条 ---")
             
-        print(f"找到{len(post_cards)}条小红书帖子")
-        
-        for idx, card in enumerate(post_cards, 1):
-            try:
-                print(f"\n正在处理第{idx}条小红书帖子...")
-                # 确保帖子卡片可点击后再点击（避免动态加载未完成）
-                WebDriverWait(driver, 5).until(EC.element_to_be_clickable(card))
-                driver.execute_script("arguments[0].click();", card)  # 用JS点击，避免遮挡
-                time.sleep(4)  # 等待详情页完全渲染（小红书详情页加载较慢）
-                
-                # 问题1补充：关闭可能弹出的广告/弹窗（避免干扰操作）
+            post_cards = []
+            selectors = [
+                "//section[contains(@class, 'note-item')]",
+                "//div[contains(@class, 'note-item')]",
+                "//a[contains(@href, '/explore/') and contains(@class, 'cover')]",
+                "//div[contains(@class, 'feeds-page')]//section",
+                "//div[@class='note-item']//a",
+            ]
+            
+            for selector in selectors:
                 try:
-                    close_btn = driver.find_element(By.XPATH, "//button[contains(text(), '关闭') or @class='close']")
-                    close_btn.click()
+                    post_cards = driver.find_elements(By.XPATH, selector)
+                    if post_cards:
+                        break
                 except:
-                    pass
-                
-                # 调整iframe逻辑：先判断是否有iframe，无则直接操作（根据你的详情页XPath，可能无iframe）
+                    continue
+            
+            if not post_cards:
+                print("⚠️ 未找到帖子元素")
+                driver.save_screenshot("./code/xhs_debug.png")
+                break
+            
+            new_posts_this_scroll = 0
+            
+            for card in post_cards:
+                if len(text_data) >= target:
+                    break
+                    
                 try:
-                    iframe = driver.find_element(By.XPATH, "//iframe[contains(@src, 'note')]")
-                    driver.switch_to.frame(iframe)
-                    print("→ 详情页存在iframe，已切换")
-                except:
-                    print("→ 详情页无iframe，直接提取内容")
-                
-                # 提取帖子ID（从详情页URL获取，确保唯一）
-                current_url = driver.current_url
-                post_id = current_url.split("/")[-1].split("?")[0] if "note" in current_url else f"xhs_{idx}_{int(time.time())}"
-                print(f"→ 帖子ID：{post_id}")
-                
-                # 问题3修复：根据你提供的文本XPATH提取内容
-                # 你的文本XPATH：/html/body/div[5]/div[1]/div[4]/div[2]/div[1]/div[1]/span/span
-                # 提取特征：div[5]/div[1]/div[4]下的span嵌套（精准层级匹配）
-                try:
-                    content = WebDriverWait(driver, 8).until(
-                        EC.presence_of_element_located((By.XPATH, 
-                            "//div/div[1]/div[4]/div[2]/div[1]/div[1]/span/span | "  # 相对层级（适配不同div索引）
-                            "/html/body/div[5]/div[1]/div[4]/div[2]/div[1]/div[1]/span/span"  # 绝对路径兜底
-                        ))
-                    ).text.strip()
-                    print(f"→ 文本内容：{content[:50]}...")  # 打印前50字预览
-                except Exception as e:
-                    content = "无文本内容"
-                    print(f"→ 提取文本失败：{str(e)}")
-                
-                # 问题2修复：根据你提供的图片XPATH提取图片
-                # 你的图片XPATH：/html/body/div[5]/div[1]/div[2]/div/div/div[2]/div/div[2]/div/div/img
-                # 提取特征：div[2]/div/div[2]/div/div[2]/div/div/img（精准层级匹配）
-                try:
-                    img_elements = WebDriverWait(driver, 5).until(
-                        EC.presence_of_all_elements_located((By.XPATH, 
-                            "//div/div[1]/div[2]/div/div/div[2]/div/div[2]/div/div/img | "  # 相对层级
-                            "/html/body/div[5]/div[1]/div[2]/div/div/div[2]/div/div[2]/div/div/img"  # 绝对路径兜底
-                        ))
-                    )
-                    img_urls = [img.get_attribute("src") for img in img_elements if img.get_attribute("src")]
-                    print(f"→ 找到{len(img_urls)}张图片")
-                except Exception as e:
+                    card_href = card.get_attribute("href") or ""
+                    post_id_match = re.search(r'/explore/([a-zA-Z0-9]+)', card_href)
+                    if not post_id_match:
+                        post_id_match = re.search(r'/discovery/item/([a-zA-Z0-9]+)', card_href)
+                    
+                    if post_id_match:
+                        post_id = post_id_match.group(1)
+                    else:
+                        continue
+                    
+                    if post_id in processed_ids:
+                        continue
+                    
+                    processed_ids.add(post_id)
+                    new_posts_this_scroll += 1
+                    
+                    print(f"\n正在处理帖子 [{len(text_data)+1}/{target}] ID: {post_id}")
+                    
+                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", card)
+                    time.sleep(0.5)
+                    driver.execute_script("arguments[0].click();", card)
+                    time.sleep(3)
+                    
+                    try:
+                        close_btn = driver.find_element(By.XPATH, "//div[contains(@class, 'close') or contains(@class, 'mask')]")
+                    except:
+                        pass
+                    
+                    current_url = driver.current_url
+                    
+                    content = ""
+                    content_selectors = [
+                        "//div[contains(@class, 'note-text')]//span",
+                        "//div[contains(@class, 'desc')]//span",
+                        "//div[@id='detail-desc']//span",
+                        "//div[contains(@class, 'content')]//span/span",
+                    ]
+                    
+                    for sel in content_selectors:
+                        try:
+                            content_elem = WebDriverWait(driver, 3).until(
+                                EC.presence_of_element_located((By.XPATH, sel))
+                            )
+                            content = content_elem.text.strip()
+                            if content and len(content) > 5:
+                                break
+                        except:
+                            continue
+                    
+                    if content:
+                        print(f"→ 文本内容：{content[:50]}...")
+                    else:
+                        content = "无文本内容"
+                        print("→ 未获取到文本内容")
+                    
                     img_urls = []
-                    print(f"→ 提取图片失败：{str(e)}")
-                
-                # 保存图片
-                if img_urls:
-                    save_image_data("xiaohongshu", img_urls, post_id)
-                else:
-                    print("→ 无图片可保存")
-                
-                # 构造文本数据
-                post_data = {
-                    "platform": "xiaohongshu",
-                    "post_id": post_id,
-                    "url": current_url,
-                    "content": content,
-                    "image_count": len(img_urls),
-                    "crawl_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-                }
-                text_data.append(post_data)
-                
-                # 关闭详情页，返回列表页（优先点击关闭按钮，兜底用返回）
-                try:
-                    close_btn = WebDriverWait(driver, 3).until(
-                        EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), '关闭') or @class='close-btn']"))
-                    )
-                    close_btn.click()
-                except:
-                    driver.execute_script("window.history.back();")
-                driver.switch_to.default_content()  # 确保退出iframe（无论之前是否切换）
-                time.sleep(2)
-                
-            except Exception as e:
-                print(f"处理第{idx}条小红书帖子失败：{str(e)}")
-                driver.switch_to.default_content()
-                time.sleep(1)
-                continue
+                    img_selectors = [
+                        "//div[contains(@class, 'swiper')]//img[@src]",
+                        "//div[contains(@class, 'carousel')]//img[@src]",
+                        "//div[contains(@class, 'note-slider')]//img[@src]",
+                        "//img[contains(@class, 'note-image')]",
+                    ]
+                    
+                    for sel in img_selectors:
+                        try:
+                            img_elements = driver.find_elements(By.XPATH, sel)
+                            for img in img_elements:
+                                src = img.get_attribute("src")
+                                if src and "xhscdn" in src and src not in img_urls:
+                                    if "avatar" not in src.lower():
+                                        img_urls.append(src)
+                            if img_urls:
+                                break
+                        except:
+                            continue
+                    
+                    if img_urls:
+                        print(f"→ 找到 {len(img_urls)} 张图片")
+                        save_image_data("xiaohongshu", img_urls, post_id)
+                        for url in img_urls:
+                            image_data.append({
+                                "platform": "xiaohongshu",
+                                "post_id": post_id,
+                                "image_url": url,
+                                "crawl_time": time.strftime("%Y-%m-%d %H:%M:%S")
+                            })
+                    else:
+                        print("→ 未找到图片")
+                    
+                    post_data = {
+                        "platform": "xiaohongshu",
+                        "post_id": post_id,
+                        "url": current_url,
+                        "content": content,
+                        "image_count": len(img_urls),
+                        "crawl_time": time.strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                    text_data.append(post_data)
+                    
+                    try:
+                        close_btn = driver.find_element(By.XPATH, 
+                            "//div[contains(@class, 'close')]//span | //button[contains(@class, 'close')]")
+                        close_btn.click()
+                    except:
+                        driver.execute_script("window.history.back();")
+                    
+                    time.sleep(1)
+                    driver.switch_to.default_content()
+                    
+                except Exception as e:
+                    print(f"处理帖子失败：{str(e)[:80]}")
+                    driver.switch_to.default_content()
+                    continue
+            
+            if new_posts_this_scroll == 0:
+                no_new_count += 1
+                if no_new_count >= 3:
+                    print("连续3次未发现新帖子，停止滚动")
+                    break
+            else:
+                no_new_count = 0
+            
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(CRAWL_CONFIG["scroll_pause"])
         
-        print(f"\n小红书爬取完成，共获取{len(text_data)}条有效数据")
-        return text_data
+        print(f"\n{'='*60}")
+        print(f"小红书爬取完成！共获取 {len(text_data)} 条文本，{len(image_data)} 张图片")
+        print(f"{'='*60}")
+        return text_data, image_data
     
     except Exception as e:
         print(f"小红书爬取主流程失败：{str(e)}")
-        return text_data
+        return text_data, image_data
 
-def crawl_weibo(driver):
+
+def crawl_weibo(driver, target_count=None):
     """
-    爬取微博包含关键词的帖子（文本+图片）- 修复图片定位问题
-    :param driver: 已登录的浏览器驱动
-    :return: 文本数据列表
+    爬取微博帖子，支持多页翻页直到达到目标条数
     """
+    print("=" * 60)
     print("开始爬取微博数据...")
+    print("=" * 60)
+    
     text_data = []
+    image_data = []
     keyword = SAVE_CONFIG["keyword"]
+    target = target_count or CRAWL_CONFIG["target_texts"]
+    processed_ids = set()
     
     try:
-        # 构造搜索URL并访问（按综合排序，确保结果完整）
-        search_url = f"{WEIBO_CONFIG['search_url']}?q={keyword}&typeall=1&suball=1&timescope=all&Refer=g"
-        driver.get(search_url)
-        time.sleep(5)
+        page = 1
         
-        # 滚动页面加载更多内容（2次滚动）
-        for i in range(2):
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            WebDriverWait(driver, 3).until(
-                lambda d: d.execute_script("return document.readyState") == "complete"
-            )
-            time.sleep(1)
-        
-        # 获取所有微博卡片（保留原有稳定定位）
-        weibo_cards = WebDriverWait(driver, 10).until(
-            EC.presence_of_all_elements_located((By.XPATH, "//div[contains(@class, 'card-wrap') and not(contains(@class, 'ad'))]"))
-        )
-        print(f"找到{len(weibo_cards)}条微博（已过滤广告）")
-        
-        for idx, card in enumerate(weibo_cards, 1):
+        while len(text_data) < target and page <= CRAWL_CONFIG["max_pages"]:
+            print(f"\n--- 第 {page} 页 | 已采集 {len(text_data)}/{target} 条 ---")
+            
+            search_url = f"{WEIBO_CONFIG['search_url']}?q={keyword}&typeall=1&suball=1&timescope=all&Refer=g&page={page}"
+            driver.get(search_url)
+            time.sleep(CRAWL_CONFIG["page_load_wait"])
+            
+            for i in range(3):
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(1)
+            
             try:
-                print(f"\n正在处理第{idx}条微博...")
-                # 提取帖子ID（保留原有逻辑）
+                weibo_cards = WebDriverWait(driver, 10).until(
+                    EC.presence_of_all_elements_located((By.XPATH, 
+                        "//div[contains(@class, 'card-wrap') and not(contains(@class, 'ad'))]"))
+                )
+            except:
+                print(f"第 {page} 页未找到微博卡片，可能已到最后一页")
+                break
+            
+            print(f"本页找到 {len(weibo_cards)} 条微博")
+            
+            new_posts_this_page = 0
+            
+            for idx, card in enumerate(weibo_cards, 1):
+                if len(text_data) >= target:
+                    break
+                    
                 try:
-                    # 找到用户名称对应的a标签（根据你提供的HTML结构）
-                    user_a_tag = card.find_element(By.XPATH, ".//a[contains(@class, 'name') and @nick-name]")
-                    # 提取nick-name属性（用户昵称）
-                    nick_name = user_a_tag.get_attribute("nick-name").strip()
-                    # 提取主页链接（href属性，补全http:协议）
-                    user_homepage = user_a_tag.get_attribute("href").strip() if user_a_tag.get_attribute("href") else "无"
-                    # 提取用户ID（从主页链接中截取：weibo.com/后面到?之前的部分）
-                    user_id = user_homepage.split("weibo.com/")[-1].split("?")[0] if "weibo.com/" in user_homepage else "无"
-                    print(f"→ 用户昵称：{nick_name} | 用户ID：{user_id} | 主页链接：{user_homepage}")
-                except Exception as e:
-                    nick_name = "无"
-                    user_id = "无"
-                    user_homepage = "无"
-                    print(f"→ 提取用户信息失败：{str(e)}")
-                # 2. 文本提取（原有正确逻辑，完全保留）
-                try:
-                    content_element = card.find_element(By.XPATH, ".//p[contains(@class, 'txt') or contains(@class, 'weibo-content')]")
-                    content = content_element.text.strip()
-                    print(f"→ 文本内容：{content[:50]}...")  # 预览前50字
-                except Exception as e:
-                    content = "无文本内容"
-                    print(f"→ 提取文本失败：{str(e)}")
-
-                # 问题4修复：根据你提供的图片XPATH提取图片
-                # 你的图片XPATH：/html/body/div[1]/div[2]/div/div[2]/div[1]/div[1]/div[2]/div/div[1]/div[2]/div[3]/div/ul/li[1]/img
-                # 提取特征：div[3]/div/ul/li//img（微博图片统一层级：内容区第3个div下的ul/li/img）
-                try:
-                    # 从当前卡片内精准定位图片（避免跨卡片匹配）
-                    img_elements = card.find_elements(By.XPATH, 
-                        ".//img[contains(@src, 'sinaimg.cn') and contains(@src, 'wx')]"
-                    )
-                    img_urls = [img.get_attribute("src") for img in img_elements if img.get_attribute("src")]
-                    print(f"→ 找到{len(img_urls)}张图片")
-                except Exception as e:
+                    try:
+                        user_a_tag = card.find_element(By.XPATH, ".//a[contains(@class, 'name') and @nick-name]")
+                        nick_name = user_a_tag.get_attribute("nick-name").strip()
+                        user_homepage = user_a_tag.get_attribute("href").strip() or "无"
+                        user_id = user_homepage.split("weibo.com/")[-1].split("?")[0] if "weibo.com/" in user_homepage else f"user_{idx}"
+                    except:
+                        nick_name = "无"
+                        user_id = f"user_{page}_{idx}"
+                        user_homepage = "无"
+                    
+                    mid = card.get_attribute("mid") or f"{user_id}_{int(time.time())}"
+                    
+                    if mid in processed_ids:
+                        continue
+                    
+                    processed_ids.add(mid)
+                    new_posts_this_page += 1
+                    
+                    print(f"\n正在处理微博 [{len(text_data)+1}/{target}] 用户: {nick_name}")
+                    
+                    try:
+                        content_element = card.find_element(By.XPATH, 
+                            ".//p[contains(@class, 'txt') or contains(@class, 'weibo-content')]")
+                        content = content_element.text.strip()
+                        print(f"→ 文本内容：{content[:50]}...")
+                    except:
+                        content = "无文本内容"
+                        print("→ 未获取到文本内容")
+                    
                     img_urls = []
-                    print(f"→ 提取图片失败：{str(e)}")
-
-                # 链接提取
-                try:
-                    match_str = user_id + '/'
-                    post_link_elem = card.find_element(By.XPATH, f".//a[contains(@href, '{match_str}')]")
-                    post_link = post_link_elem.get_attribute("href").strip()
-                    print(f"→ 帖子链接：{post_link}")
+                    try:
+                        img_elements = card.find_elements(By.XPATH, 
+                            ".//img[contains(@src, 'sinaimg.cn')]")
+                        for img in img_elements:
+                            src = img.get_attribute("src")
+                            if src and "orj360" in src:
+                                large_src = src.replace("orj360", "large")
+                                img_urls.append(large_src)
+                            elif src and ("mw690" in src or "thumb" in src):
+                                large_src = re.sub(r'(orj\d+|mw\d+|thumb\d+)', 'large', src)
+                                img_urls.append(large_src)
+                            elif src:
+                                img_urls.append(src)
+                    except:
+                        pass
+                    
+                    if img_urls:
+                        print(f"→ 找到 {len(img_urls)} 张图片")
+                        save_image_data("weibo", img_urls, user_id)
+                        for url in img_urls:
+                            image_data.append({
+                                "platform": "weibo",
+                                "user_id": user_id,
+                                "nick_name": nick_name,
+                                "image_url": url,
+                                "crawl_time": time.strftime("%Y-%m-%d %H:%M:%S")
+                            })
+                    else:
+                        print("→ 无图片")
+                    
+                    try:
+                        post_link_elem = card.find_element(By.XPATH, f".//a[contains(@href, '{user_id}/')]")
+                        post_link = post_link_elem.get_attribute("href").strip()
+                    except:
+                        post_link = ""
+                    
+                    post_data = {
+                        "platform": "weibo",
+                        "mid": mid,
+                        "user_id": user_id,
+                        "nick_name": nick_name,
+                        "user_homepage": user_homepage,
+                        "url": post_link,
+                        "content": content,
+                        "image_count": len(img_urls),
+                        "crawl_time": time.strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                    text_data.append(post_data)
+                    
                 except Exception as e:
-                    post_link = ""
-                    print(f"→ 提取帖子链接失败：{str(e)}")
-
-                               
-                # 保存图片
-                if img_urls:
-                    save_image_data("weibo", img_urls, user_id)
-                else:
-                    print("→ 无图片可保存")
-                
-                # 构造文本数据
-                post_data = {
-                    "platform": "weibo",
-                    "user_id": user_id,  # 新增：用户ID
-                    "nick_name": nick_name,  # 新增：用户昵称
-                    "user_homepage": user_homepage,  # 新增：用户主页链接
-                    "url": post_link,  # 使用提取的帖子链接
-                    "content": content,
-                    "image_count": len(img_urls),
-                    "crawl_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-                }
-                text_data.append(post_data)
-                
-            except Exception as e:
-                print(f"处理第{idx}条微博失败：{str(e)}")
-                continue
+                    print(f"处理微博失败：{str(e)[:80]}")
+                    continue
+            
+            if new_posts_this_page == 0:
+                print("本页无新内容，可能已到最后一页")
+                break
+            
+            page += 1
         
-        print(f"\n微博爬取完成，共获取{len(text_data)}条有效数据")
-        return text_data
+        print(f"\n{'='*60}")
+        print(f"微博爬取完成！共获取 {len(text_data)} 条文本，{len(image_data)} 张图片")
+        print(f"{'='*60}")
+        return text_data, image_data
     
     except Exception as e:
         print(f"微博爬取主流程失败：{str(e)}")
-        return text_data
+        return text_data, image_data

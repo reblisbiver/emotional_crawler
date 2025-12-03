@@ -39,11 +39,6 @@ localPort = 45361
 externalPort = 80
 exposeLocalhost = true
 
-[[ports]]
-localPort = 56061
-externalPort = 3001
-exposeLocalhost = true
-
 [userenv]
 
 [userenv.shared]

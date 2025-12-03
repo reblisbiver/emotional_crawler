@@ -255,8 +255,10 @@ def crawl_weibo(driver, target_count=None):
                 try:
                     try:
                         user_a_tag = card.find_element(By.XPATH, ".//a[contains(@class, 'name') and @nick-name]")
-                        nick_name = user_a_tag.get_attribute("nick-name").strip()
-                        user_homepage = user_a_tag.get_attribute("href").strip() or "无"
+                        nick_name_attr = user_a_tag.get_attribute("nick-name")
+                        nick_name = nick_name_attr.strip() if nick_name_attr else "无"
+                        href_attr = user_a_tag.get_attribute("href")
+                        user_homepage = href_attr.strip() if href_attr else "无"
                         user_id = user_homepage.split("weibo.com/")[-1].split("?")[0] if "weibo.com/" in user_homepage else f"user_{idx}"
                     except:
                         nick_name = "无"
@@ -315,7 +317,8 @@ def crawl_weibo(driver, target_count=None):
                     
                     try:
                         post_link_elem = card.find_element(By.XPATH, f".//a[contains(@href, '{user_id}/')]")
-                        post_link = post_link_elem.get_attribute("href").strip()
+                        href_attr = post_link_elem.get_attribute("href")
+                        post_link = href_attr.strip() if href_attr else ""
                     except:
                         post_link = ""
                     

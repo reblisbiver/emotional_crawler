@@ -27,7 +27,7 @@ outputType = "vnc"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd code && python main.py"
+args = "cd code && python main.py --texts 10 --weibo-only"
 
 [[ports]]
 localPort = 39575
@@ -38,3 +38,13 @@ exposeLocalhost = true
 localPort = 45361
 externalPort = 80
 exposeLocalhost = true
+
+[[ports]]
+localPort = 59597
+externalPort = 3001
+exposeLocalhost = true
+
+[userenv]
+
+[userenv.shared]
+DEEPSEEK_API_KEY = "sk-a4890b6f726f4b2591902f5b3ea7c313"

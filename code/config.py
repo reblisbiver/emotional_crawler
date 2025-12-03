@@ -27,12 +27,16 @@ CRAWL_CONFIG = {
     "page_load_wait": 5,
 }
 
+_deepseek_key = os.getenv("DEEPSEEK_API_KEY", "")
+if not _deepseek_key:
+    print("⚠️ 警告：未设置 DEEPSEEK_API_KEY 环境变量，文本情绪分析将不可用")
+
 EMOTION_CONFIG = {
     "emotions": ["喜", "怒", "哀", "惧", "惊", "厌", "中性"],
     "emotions_en": ["happy", "angry", "sad", "fear", "surprise", "disgust", "neutral"],
-    "deepseek_api_key": os.getenv("DEEPSEEK_API_KEY", "sk-a4890b6f726f4b2591902f5b3ea7c313"),
+    "deepseek_api_key": _deepseek_key,
     "deepseek_api_url": "https://api.deepseek.com/v1/chat/completions",
-    "analyze_text": True,
+    "analyze_text": bool(_deepseek_key),
     "analyze_image": True,
 }
 

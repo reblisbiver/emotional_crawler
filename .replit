@@ -27,7 +27,7 @@ outputType = "vnc"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd code && python main.py --texts 10 --weibo-only"
+args = "cd code && python main.py --texts 5 --weibo-only"
 
 [[ports]]
 localPort = 39575
@@ -40,7 +40,7 @@ externalPort = 80
 exposeLocalhost = true
 
 [[ports]]
-localPort = 47689
+localPort = 56061
 externalPort = 3001
 exposeLocalhost = true
 

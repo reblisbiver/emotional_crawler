@@ -1,55 +1,115 @@
+"""
+爬虫核心逻辑
+- 爬取文本 → 情绪筛选 → 符合条件才存储
+- 爬取图片 → 人体检测 → 情绪筛选 → 符合条件才存储
+"""
+
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.keys import Keys
 import time
 import re
+import os
+import requests
 from config import XHS_CONFIG, WEIBO_CONFIG, SAVE_CONFIG, CRAWL_CONFIG
-from save_utils import save_image_data
+from emotion_filter import filter_text
 
-def crawl_xiaohongshu(driver, target_count=None):
+
+def save_filtered_text(platform, text_data, emotion_data):
+    """保存通过筛选的文本"""
+    import json
+    from datetime import datetime
+    
+    save_dir = os.path.join(SAVE_CONFIG["text_path"], platform)
+    os.makedirs(save_dir, exist_ok=True)
+    
+    filename = f"filtered_{datetime.now().strftime('%Y%m%d')}.json"
+    filepath = os.path.join(save_dir, filename)
+    
+    existing_data = []
+    if os.path.exists(filepath):
+        with open(filepath, "r", encoding="utf-8") as f:
+            existing_data = json.load(f)
+    
+    save_item = {
+        **text_data,
+        "emotion_analysis": emotion_data
+    }
+    existing_data.append(save_item)
+    
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(existing_data, f, ensure_ascii=False, indent=2)
+    
+    return True
+
+
+def save_image_for_local_analysis(platform, image_url, post_id, index):
     """
-    爬取小红书帖子，支持多页滚动直到达到目标条数
+    下载图片用于本地分析
+    图片情绪筛选需要在本地运行
+    """
+    save_dir = os.path.join(SAVE_CONFIG["image_path"], platform, "pending")
+    os.makedirs(save_dir, exist_ok=True)
+    
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://weibo.com/" if platform == "weibo" else "https://www.xiaohongshu.com/"
+        }
+        resp = requests.get(image_url, headers=headers, timeout=15)
+        
+        if resp.status_code == 200:
+            filename = f"{post_id}_{index}.jpg"
+            filepath = os.path.join(save_dir, filename)
+            
+            with open(filepath, "wb") as f:
+                f.write(resp.content)
+            
+            return filepath
+    except Exception as e:
+        print(f"  图片下载失败: {str(e)[:30]}")
+    
+    return None
+
+
+def crawl_xiaohongshu(driver, target_texts=None, target_images=None):
+    """
+    爬取小红书
+    逻辑：爬取 → 情绪筛选 → 符合条件才存储
     """
     print("=" * 60)
     print("开始爬取小红书数据...")
     print("=" * 60)
     
-    text_data = []
-    image_data = []
-    keyword = SAVE_CONFIG["keyword"]
-    target = target_count or CRAWL_CONFIG["target_texts"]
+    saved_texts = 0
+    saved_images = 0
+    target_texts = target_texts or CRAWL_CONFIG["target_texts"]
+    target_images = target_images or CRAWL_CONFIG["target_images"]
     processed_ids = set()
     
+    stats = {"total_checked": 0, "texts_saved": 0, "images_downloaded": 0}
+    
     try:
-        search_url = f"{XHS_CONFIG['search_url']}?keyword={keyword}"
-        print(f"→ 访问搜索页面：{search_url}")
-        driver.get(search_url)
+        print(f"→ 访问探索页面：{XHS_CONFIG['explore_url']}")
+        driver.get(XHS_CONFIG["explore_url"])
         time.sleep(CRAWL_CONFIG["page_load_wait"])
         
-        print(f"→ 当前页面URL：{driver.current_url}")
-        print(f"→ 页面标题：{driver.title}")
-        
-        if "login" in driver.current_url.lower() or "passport" in driver.current_url.lower():
-            print("⚠️ 检测到登录页面，可能需要重新登录...")
-            driver.save_screenshot("./code/xhs_need_login.png")
-            return text_data, image_data
+        if "login" in driver.current_url.lower():
+            print("⚠️ 需要登录，请先完成登录")
+            return stats
         
         scroll_count = 0
         max_scrolls = CRAWL_CONFIG["max_pages"] * 5
-        no_new_count = 0
         
-        while len(text_data) < target and scroll_count < max_scrolls:
+        while (saved_texts < target_texts or saved_images < target_images) and scroll_count < max_scrolls:
             scroll_count += 1
-            print(f"\n--- 第 {scroll_count} 次滚动 | 已采集 {len(text_data)}/{target} 条 ---")
+            print(f"\n--- 滚动 {scroll_count} | 文本 {saved_texts}/{target_texts} | 图片 {saved_images}/{target_images} ---")
             
             post_cards = []
             selectors = [
                 "//section[contains(@class, 'note-item')]",
                 "//div[contains(@class, 'note-item')]",
-                "//a[contains(@href, '/explore/') and contains(@class, 'cover')]",
-                "//div[contains(@class, 'feeds-page')]//section",
-                "//div[@class='note-item']//a",
+                "//a[contains(@href, '/explore/')]",
             ]
             
             for selector in selectors:
@@ -61,174 +121,139 @@ def crawl_xiaohongshu(driver, target_count=None):
                     continue
             
             if not post_cards:
-                print("⚠️ 未找到帖子元素")
-                driver.save_screenshot("./code/xhs_debug.png")
+                print("⚠️ 未找到帖子")
                 break
             
-            new_posts_this_scroll = 0
-            
             for card in post_cards:
-                if len(text_data) >= target:
+                if saved_texts >= target_texts and saved_images >= target_images:
                     break
-                    
+                
                 try:
                     card_href = card.get_attribute("href") or ""
                     post_id_match = re.search(r'/explore/([a-zA-Z0-9]+)', card_href)
                     if not post_id_match:
-                        post_id_match = re.search(r'/discovery/item/([a-zA-Z0-9]+)', card_href)
-                    
-                    if post_id_match:
-                        post_id = post_id_match.group(1)
-                    else:
                         continue
                     
+                    post_id = post_id_match.group(1)
                     if post_id in processed_ids:
                         continue
                     
                     processed_ids.add(post_id)
-                    new_posts_this_scroll += 1
-                    
-                    print(f"\n正在处理帖子 [{len(text_data)+1}/{target}] ID: {post_id}")
+                    stats["total_checked"] += 1
                     
                     driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", card)
                     time.sleep(0.5)
                     driver.execute_script("arguments[0].click();", card)
-                    time.sleep(3)
-                    
-                    try:
-                        close_btn = driver.find_element(By.XPATH, "//div[contains(@class, 'close') or contains(@class, 'mask')]")
-                    except:
-                        pass
-                    
-                    current_url = driver.current_url
+                    time.sleep(2)
                     
                     content = ""
                     content_selectors = [
                         "//div[contains(@class, 'note-text')]//span",
                         "//div[contains(@class, 'desc')]//span",
-                        "//div[@id='detail-desc']//span",
-                        "//div[contains(@class, 'content')]//span/span",
                     ]
                     
                     for sel in content_selectors:
                         try:
-                            content_elem = WebDriverWait(driver, 3).until(
+                            elem = WebDriverWait(driver, 3).until(
                                 EC.presence_of_element_located((By.XPATH, sel))
                             )
-                            content = content_elem.text.strip()
-                            if content and len(content) > 5:
+                            content = elem.text.strip()
+                            if content and len(content) > 10:
                                 break
                         except:
                             continue
                     
-                    if content:
-                        print(f"→ 文本内容：{content[:50]}...")
-                    else:
-                        content = "无文本内容"
-                        print("→ 未获取到文本内容")
-                    
-                    img_urls = []
-                    img_selectors = [
-                        "//div[contains(@class, 'swiper')]//img[@src]",
-                        "//div[contains(@class, 'carousel')]//img[@src]",
-                        "//div[contains(@class, 'note-slider')]//img[@src]",
-                        "//img[contains(@class, 'note-image')]",
-                    ]
-                    
-                    for sel in img_selectors:
-                        try:
-                            img_elements = driver.find_elements(By.XPATH, sel)
-                            for img in img_elements:
-                                src = img.get_attribute("src")
-                                if src and "xhscdn" in src and src not in img_urls:
-                                    if "avatar" not in src.lower():
-                                        img_urls.append(src)
-                            if img_urls:
-                                break
-                        except:
-                            continue
-                    
-                    if img_urls:
-                        print(f"→ 找到 {len(img_urls)} 张图片")
-                        save_image_data("xiaohongshu", img_urls, post_id)
-                        for url in img_urls:
-                            image_data.append({
+                    if content and saved_texts < target_texts:
+                        should_save, emotion_data = filter_text(content, post_id)
+                        
+                        if should_save:
+                            text_data = {
                                 "platform": "xiaohongshu",
                                 "post_id": post_id,
-                                "image_url": url,
+                                "content": content,
                                 "crawl_time": time.strftime("%Y-%m-%d %H:%M:%S")
-                            })
-                    else:
-                        print("→ 未找到图片")
+                            }
+                            save_filtered_text("xiaohongshu", text_data, emotion_data)
+                            saved_texts += 1
+                            stats["texts_saved"] += 1
+                            dominant = emotion_data.get("dominant", "?")
+                            print(f"  ✓ 文本已保存 [{saved_texts}/{target_texts}] 主情绪: {dominant}")
+                        else:
+                            print(f"  ✗ 文本不符合情绪条件，跳过")
                     
-                    post_data = {
-                        "platform": "xiaohongshu",
-                        "post_id": post_id,
-                        "url": current_url,
-                        "content": content,
-                        "image_count": len(img_urls),
-                        "crawl_time": time.strftime("%Y-%m-%d %H:%M:%S")
-                    }
-                    text_data.append(post_data)
+                    if saved_images < target_images:
+                        img_urls = []
+                        try:
+                            img_elements = driver.find_elements(By.XPATH, 
+                                "//div[contains(@class, 'swiper')]//img[@src]")
+                            for img in img_elements:
+                                src = img.get_attribute("src")
+                                if src and "xhscdn" in src and "avatar" not in src.lower():
+                                    img_urls.append(src)
+                        except:
+                            pass
+                        
+                        for idx, url in enumerate(img_urls[:3]):
+                            if saved_images >= target_images:
+                                break
+                            filepath = save_image_for_local_analysis("xiaohongshu", url, post_id, idx)
+                            if filepath:
+                                saved_images += 1
+                                stats["images_downloaded"] += 1
+                                print(f"  ✓ 图片已下载 [{saved_images}/{target_images}]")
                     
                     try:
-                        close_btn = driver.find_element(By.XPATH, 
-                            "//div[contains(@class, 'close')]//span | //button[contains(@class, 'close')]")
+                        close_btn = driver.find_element(By.XPATH, "//div[contains(@class, 'close')]")
                         close_btn.click()
                     except:
                         driver.execute_script("window.history.back();")
                     
                     time.sleep(1)
-                    driver.switch_to.default_content()
                     
                 except Exception as e:
-                    print(f"处理帖子失败：{str(e)[:80]}")
-                    driver.switch_to.default_content()
+                    print(f"  处理失败: {str(e)[:50]}")
                     continue
-            
-            if new_posts_this_scroll == 0:
-                no_new_count += 1
-                if no_new_count >= 3:
-                    print("连续3次未发现新帖子，停止滚动")
-                    break
-            else:
-                no_new_count = 0
             
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(CRAWL_CONFIG["scroll_pause"])
         
         print(f"\n{'='*60}")
-        print(f"小红书爬取完成！共获取 {len(text_data)} 条文本，{len(image_data)} 张图片")
+        print(f"小红书爬取完成！")
+        print(f"检查总数: {stats['total_checked']} | 保存文本: {stats['texts_saved']} | 下载图片: {stats['images_downloaded']}")
         print(f"{'='*60}")
-        return text_data, image_data
+        
+        return stats
     
     except Exception as e:
-        print(f"小红书爬取主流程失败：{str(e)}")
-        return text_data, image_data
+        print(f"小红书爬取失败：{str(e)}")
+        return stats
 
 
-def crawl_weibo(driver, target_count=None):
+def crawl_weibo(driver, target_texts=None, target_images=None):
     """
-    爬取微博帖子，支持多页翻页直到达到目标条数
+    爬取微博热门
+    逻辑：爬取 → 情绪筛选 → 符合条件才存储
     """
     print("=" * 60)
     print("开始爬取微博数据...")
     print("=" * 60)
     
-    text_data = []
-    image_data = []
-    keyword = SAVE_CONFIG["keyword"]
-    target = target_count or CRAWL_CONFIG["target_texts"]
+    saved_texts = 0
+    saved_images = 0
+    target_texts = target_texts or CRAWL_CONFIG["target_texts"]
+    target_images = target_images or CRAWL_CONFIG["target_images"]
     processed_ids = set()
+    
+    stats = {"total_checked": 0, "texts_saved": 0, "images_downloaded": 0}
     
     try:
         page = 1
         
-        while len(text_data) < target and page <= CRAWL_CONFIG["max_pages"]:
-            print(f"\n--- 第 {page} 页 | 已采集 {len(text_data)}/{target} 条 ---")
+        while (saved_texts < target_texts or saved_images < target_images) and page <= CRAWL_CONFIG["max_pages"]:
+            print(f"\n--- 第 {page} 页 | 文本 {saved_texts}/{target_texts} | 图片 {saved_images}/{target_images} ---")
             
-            search_url = f"{WEIBO_CONFIG['search_url']}?q={keyword}&typeall=1&suball=1&timescope=all&Refer=g&page={page}"
-            driver.get(search_url)
+            url = f"{WEIBO_CONFIG['home_url']}?page={page}"
+            driver.get(url)
             time.sleep(CRAWL_CONFIG["page_load_wait"])
             
             for i in range(3):
@@ -238,118 +263,93 @@ def crawl_weibo(driver, target_count=None):
             try:
                 weibo_cards = WebDriverWait(driver, 10).until(
                     EC.presence_of_all_elements_located((By.XPATH, 
-                        "//div[contains(@class, 'card-wrap') and not(contains(@class, 'ad'))]"))
+                        "//div[contains(@class, 'card-wrap') and not(contains(@class, 'ad'))] | //article[contains(@class, 'Feed')]"))
                 )
             except:
-                print(f"第 {page} 页未找到微博卡片，可能已到最后一页")
+                print(f"第 {page} 页未找到微博")
                 break
             
             print(f"本页找到 {len(weibo_cards)} 条微博")
             
-            new_posts_this_page = 0
-            
-            for idx, card in enumerate(weibo_cards, 1):
-                if len(text_data) >= target:
+            for card in weibo_cards:
+                if saved_texts >= target_texts and saved_images >= target_images:
                     break
-                    
+                
                 try:
-                    try:
-                        user_a_tag = card.find_element(By.XPATH, ".//a[contains(@class, 'name') and @nick-name]")
-                        nick_name_attr = user_a_tag.get_attribute("nick-name")
-                        nick_name = nick_name_attr.strip() if nick_name_attr else "无"
-                        href_attr = user_a_tag.get_attribute("href")
-                        user_homepage = href_attr.strip() if href_attr else "无"
-                        user_id = user_homepage.split("weibo.com/")[-1].split("?")[0] if "weibo.com/" in user_homepage else f"user_{idx}"
-                    except:
-                        nick_name = "无"
-                        user_id = f"user_{page}_{idx}"
-                        user_homepage = "无"
-                    
-                    mid = card.get_attribute("mid") or f"{user_id}_{int(time.time())}"
+                    mid = card.get_attribute("mid") or card.get_attribute("data-mid") or f"weibo_{page}_{len(processed_ids)}"
                     
                     if mid in processed_ids:
                         continue
                     
                     processed_ids.add(mid)
-                    new_posts_this_page += 1
+                    stats["total_checked"] += 1
                     
-                    print(f"\n正在处理微博 [{len(text_data)+1}/{target}] 用户: {nick_name}")
-                    
+                    content = ""
                     try:
-                        content_element = card.find_element(By.XPATH, 
-                            ".//p[contains(@class, 'txt') or contains(@class, 'weibo-content')]")
-                        content = content_element.text.strip()
-                        print(f"→ 文本内容：{content[:50]}...")
-                    except:
-                        content = "无文本内容"
-                        print("→ 未获取到文本内容")
-                    
-                    img_urls = []
-                    try:
-                        img_elements = card.find_elements(By.XPATH, 
-                            ".//img[contains(@src, 'sinaimg.cn')]")
-                        for img in img_elements:
-                            src = img.get_attribute("src")
-                            if src and "orj360" in src:
-                                large_src = src.replace("orj360", "large")
-                                img_urls.append(large_src)
-                            elif src and ("mw690" in src or "thumb" in src):
-                                large_src = re.sub(r'(orj\d+|mw\d+|thumb\d+)', 'large', src)
-                                img_urls.append(large_src)
-                            elif src:
-                                img_urls.append(src)
+                        content_elem = card.find_element(By.XPATH, 
+                            ".//p[contains(@class, 'txt')] | .//div[contains(@class, 'detail_wbtext')]")
+                        content = content_elem.text.strip()
                     except:
                         pass
                     
-                    if img_urls:
-                        print(f"→ 找到 {len(img_urls)} 张图片")
-                        save_image_data("weibo", img_urls, user_id)
-                        for url in img_urls:
-                            image_data.append({
+                    if content and len(content) > 10 and saved_texts < target_texts:
+                        should_save, emotion_data = filter_text(content, mid)
+                        
+                        if should_save:
+                            try:
+                                user_elem = card.find_element(By.XPATH, ".//a[contains(@class, 'name') or @nick-name]")
+                                nick_name = user_elem.get_attribute("nick-name") or user_elem.text.strip()
+                            except:
+                                nick_name = "未知"
+                            
+                            text_data = {
                                 "platform": "weibo",
-                                "user_id": user_id,
+                                "mid": mid,
                                 "nick_name": nick_name,
-                                "image_url": url,
+                                "content": content,
                                 "crawl_time": time.strftime("%Y-%m-%d %H:%M:%S")
-                            })
-                    else:
-                        print("→ 无图片")
+                            }
+                            save_filtered_text("weibo", text_data, emotion_data)
+                            saved_texts += 1
+                            stats["texts_saved"] += 1
+                            dominant = emotion_data.get("dominant", "?")
+                            print(f"  ✓ 文本已保存 [{saved_texts}/{target_texts}] 主情绪: {dominant} | {nick_name}")
+                        else:
+                            pass
                     
-                    try:
-                        post_link_elem = card.find_element(By.XPATH, f".//a[contains(@href, '{user_id}/')]")
-                        href_attr = post_link_elem.get_attribute("href")
-                        post_link = href_attr.strip() if href_attr else ""
-                    except:
-                        post_link = ""
-                    
-                    post_data = {
-                        "platform": "weibo",
-                        "mid": mid,
-                        "user_id": user_id,
-                        "nick_name": nick_name,
-                        "user_homepage": user_homepage,
-                        "url": post_link,
-                        "content": content,
-                        "image_count": len(img_urls),
-                        "crawl_time": time.strftime("%Y-%m-%d %H:%M:%S")
-                    }
-                    text_data.append(post_data)
+                    if saved_images < target_images:
+                        img_urls = []
+                        try:
+                            img_elements = card.find_elements(By.XPATH, ".//img[contains(@src, 'sinaimg.cn')]")
+                            for img in img_elements:
+                                src = img.get_attribute("src")
+                                if src:
+                                    large_src = re.sub(r'(orj\d+|mw\d+|thumb\d+)', 'large', src)
+                                    img_urls.append(large_src)
+                        except:
+                            pass
+                        
+                        for idx, url in enumerate(img_urls[:3]):
+                            if saved_images >= target_images:
+                                break
+                            filepath = save_image_for_local_analysis("weibo", url, mid, idx)
+                            if filepath:
+                                saved_images += 1
+                                stats["images_downloaded"] += 1
+                                print(f"  ✓ 图片已下载 [{saved_images}/{target_images}]")
                     
                 except Exception as e:
-                    print(f"处理微博失败：{str(e)[:80]}")
                     continue
-            
-            if new_posts_this_page == 0:
-                print("本页无新内容，可能已到最后一页")
-                break
             
             page += 1
         
         print(f"\n{'='*60}")
-        print(f"微博爬取完成！共获取 {len(text_data)} 条文本，{len(image_data)} 张图片")
+        print(f"微博爬取完成！")
+        print(f"检查总数: {stats['total_checked']} | 保存文本: {stats['texts_saved']} | 下载图片: {stats['images_downloaded']}")
         print(f"{'='*60}")
-        return text_data, image_data
+        
+        return stats
     
     except Exception as e:
-        print(f"微博爬取主流程失败：{str(e)}")
-        return text_data, image_data
+        print(f"微博爬取失败：{str(e)}")
+        return stats
